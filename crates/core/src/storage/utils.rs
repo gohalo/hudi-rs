@@ -17,11 +17,14 @@
  * under the License.
  */
 
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::path::Path;
 
-use anyhow::{anyhow, Result};
 use url::{ParseError, Url};
+
+use crate::{
+    Error::{InvalidPath, UrlParse},
+    Result,
+};
 
 pub fn split_filename(filename: &str) -> Result<(String, String)> {
     let path = Path::new(filename);
@@ -29,7 +32,10 @@ pub fn split_filename(filename: &str) -> Result<(String, String)> {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| anyhow!("No file stem found"))?
+        .ok_or_else(|| InvalidPath {
+            name: filename.to_string(),
+            detail: "no file stem found".to_string(),
+        })?
         .to_string();
 
     let extension = path
@@ -42,13 +48,20 @@ pub fn split_filename(filename: &str) -> Result<(String, String)> {
 }
 
 pub fn parse_uri(uri: &str) -> Result<Url> {
-    let mut url = Url::parse(uri)
-        .or(Url::from_file_path(PathBuf::from_str(uri)?))
-        .map_err(|_| anyhow!("Failed to parse uri: {}", uri))?;
+    let mut url = match Url::parse(uri) {
+        Ok(url) => url,
+        Err(source) => Url::from_directory_path(uri).map_err(|_| UrlParse {
+            url: uri.to_string(),
+            source,
+        })?,
+    };
 
     if url.path().ends_with('/') {
         url.path_segments_mut()
-            .map_err(|_| anyhow!("Failed to parse uri: {}", uri))?
+            .map_err(|_| InvalidPath {
+                name: uri.to_string(),
+                detail: "parse uri failed".to_string(),
+            })?
             .pop();
     }
 
@@ -69,7 +82,10 @@ pub fn join_url_segments(base_url: &Url, segments: &[&str]) -> Result<Url> {
     for &seg in segments {
         let segs: Vec<_> = seg.split('/').filter(|&s| !s.is_empty()).collect();
         url.path_segments_mut()
-            .map_err(|_| ParseError::RelativeUrlWithoutBase)?
+            .map_err(|_| UrlParse {
+                url: base_url.to_string(),
+                source: ParseError::RelativeUrlWithoutBase,
+            })?
             .extend(segs);
     }
 
